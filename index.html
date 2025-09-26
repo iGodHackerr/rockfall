@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Rockfall Prediction Demo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .map-container {
+            position: relative; width: 100%; max-width: 640px; aspect-ratio: 1 / 1;
+            /* --- UPDATED TO USE THE NEW FLASK ROUTE --- */
+            /* Ensure 'mine_pit.jpg' is in the same folder as app.py */
+            background-image: url('/mine_pit.jpg');
+            background-size: cover; background-position: center; border-radius: 1rem;
+            overflow: hidden; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2), 0 4px 6px -2px rgba(0, 0, 0, 0.1);
+        }
+        .mine-grid {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            display: grid; grid-template-columns: repeat(20, 1fr); grid-template-rows: repeat(20, 1fr);
+        }
+        .mine-cell {
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: box-shadow 0.5s ease-in-out, background-color 0.3s ease;
+            cursor: pointer;
+        }
+        .mine-cell:hover { background-color: rgba(255, 255, 255, 0.1); }
+        input[type=range]::-webkit-slider-runnable-track { height: 6px; cursor: pointer; background: #4a5568; border-radius: 5px; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%; background: #6366f1; cursor: pointer; margin-top: -6px; }
+        .loader {
+            border: 4px solid #f3f3f3; border-top: 4px solid #6366f1; border-radius: 50%;
+            width: 24px; height: 24px; animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #info-panel { transition: opacity 0.3s ease, transform 0.3s ease; }
+    </style>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-900 text-gray-200 min-h-screen flex items-center justify-center p-4">
+
+    <div class="w-full max-w-7xl mx-auto bg-gray-800 rounded-2xl shadow-2xl p-6 md:p-8 flex flex-col lg:flex-row gap-6 lg:gap-8">
+
+        <!-- Left Side: Controls -->
+        <div class="w-full lg-w-2/5 xl:w-1/3 bg-gray-900/50 p-6 rounded-xl border border-gray-700">
+            <div class="flex justify-between items-center mb-2">
+                <h1 class="text-2xl font-bold text-white">Rockfall Prediction</h1>
+                <div id="loader-container" class="h-6 flex items-center justify-center opacity-0 transition-opacity duration-300"><div class="loader"></div></div>
+            </div>
+            <p class="text-gray-400 mb-6">Adjust factors and click "Run Test" to update the map.</p>
+            
+            <div class="space-y-5">
+                <!-- Geotechnical Sensor Data -->
+                <div>
+                    <label for="displacement" class="block text-sm font-medium text-gray-300">Displacement (mm)</label>
+                    <div class="flex items-center gap-4 mt-1.5">
+                        <input type="range" id="displacement" min="0" max="5" value="0.5" step="0.1" class="w-full control-slider">
+                        <span id="displacement-value" class="font-semibold text-indigo-400 w-12 text-center">0.5</span>
+                    </div>
+                </div>
+                 <div>
+                    <label for="strain" class="block text-sm font-medium text-gray-300">Strain (με)</label>
+                    <div class="flex items-center gap-4 mt-1.5">
+                        <input type="range" id="strain" min="100" max="2000" value="200" step="10" class="w-full control-slider">
+                        <span id="strain-value" class="font-semibold text-indigo-400 w-12 text-center">200</span>
+                    </div>
+                </div>
+                 <div>
+                    <label for="pore-pressure" class="block text-sm font-medium text-gray-300">Pore Pressure (kPa)</label>
+                    <div class="flex items-center gap-4 mt-1.5">
+                        <input type="range" id="pore-pressure" min="5" max="60" value="10" step="1" class="w-full control-slider">
+                        <span id="pore-pressure-value" class="font-semibold text-indigo-400 w-12 text-center">10</span>
+                    </div>
+                </div>
+
+                <!-- Environmental Factors -->
+                <div class="pt-4 border-t border-gray-700">
+                    <label for="rainfall" class="block text-sm font-medium text-gray-300">Rainfall (mm/hr)</label>
+                    <div class="flex items-center gap-4 mt-1.5">
+                        <input type="range" id="rainfall" min="0" max="100" value="0" step="1" class="w-full control-slider">
+                        <span id="rainfall-value" class="font-semibold text-indigo-400 w-12 text-center">0</span>
+                    </div>
+                </div>
+                <div>
+                    <label for="temperature" class="block text-sm font-medium text-gray-300">Temperature (°C)</label>
+                    <div class="flex items-center gap-4 mt-1.5">
+                        <input type="range" id="temperature" min="-20" max="50" value="15" step="1" class="w-full control-slider">
+                        <span id="temperature-value" class="font-semibold text-indigo-400 w-12 text-center">15</span>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between">
+                    <span class="text-sm font-medium text-gray-300">Blasting/Vibrations</span>
+                    <label for="vibration" class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="vibration" class="sr-only peer control-slider">
+                        <div class="w-11 h-6 bg-gray-600 rounded-full peer peer-focus:ring-4 peer-focus:ring-indigo-800 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                </div>
+            </div>
+
+            <div class="mt-6 space-y-3">
+                 <button id="run-test-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-indigo-500/50 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <span>Run Test</span>
+                 </button>
+                 <button id="reset-btn" class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-4 rounded-lg transition-all duration-300 focus:outline-none focus:ring-4 focus:ring-gray-500/50 flex items-center justify-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    <span>Reset to Default</span>
+                </button>
+            </div>
+            
+            <!-- Info Panel for Cell Details -->
+            <div id="info-panel" class="mt-6 p-4 bg-gray-700/50 rounded-lg border border-gray-600 opacity-0 transform scale-95">
+                <h3 class="font-bold text-lg text-white mb-2">Zone Details</h3>
+                <div id="info-content" class="text-sm space-y-1.5">
+                    <p>Click on a map zone to see its details.</p>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Right Side: Mine Pit Map -->
+        <div class="w-full lg:w-3/5 xl:w-2/3 flex flex-col items-center justify-center">
+            <h2 class="text-xl font-semibold mb-4 text-white">Mine Pit Risk Map</h2>
+            <div class="map-container">
+                <div id="mine-grid" class="mine-grid"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            const GRID_SIZE = 20;
+            const mineGrid = document.getElementById('mine-grid');
+            const loader = document.getElementById('loader-container');
+            const infoPanel = document.getElementById('info-panel');
+            const infoContent = document.getElementById('info-content');
+            const runTestBtn = document.getElementById('run-test-btn');
+            const resetBtn = document.getElementById('reset-btn');
+
+            const controls = {
+                displacement: { slider: document.getElementById('displacement'), valueEl: document.getElementById('displacement-value'), fixed: 1, default: '0.5' },
+                strain: { slider: document.getElementById('strain'), valueEl: document.getElementById('strain-value'), fixed: 0, default: '200' },
+                porePressure: { slider: document.getElementById('pore-pressure'), valueEl: document.getElementById('pore-pressure-value'), fixed: 0, default: '10' },
+                rainfall: { slider: document.getElementById('rainfall'), valueEl: document.getElementById('rainfall-value'), fixed: 0, default: '0' },
+                temperature: { slider: document.getElementById('temperature'), valueEl: document.getElementById('temperature-value'), fixed: 0, default: '15' },
+                vibration: { checkbox: document.getElementById('vibration'), default: false }
+            };
+
+            let staticMineData = {};
+            let currentRiskData = {};
+
+            // --- Initial Setup ---
+            try {
+                loader.classList.remove('opacity-0');
+                const response = await fetch('/api/mine-static-data');
+                const data = await response.json();
+                data.forEach(cell => staticMineData[cell.cell_id] = cell);
+            } catch (error) {
+                console.error("Failed to load static mine data:", error);
+                alert("Could not load mine data. The backend might not be running.");
+                return;
+            } finally {
+                loader.classList.add('opacity-0');
+            }
+
+            for (let i = 0; i < GRID_SIZE; i++) {
+                for (let j = 0; j < GRID_SIZE; j++) {
+                    const cellId = `cell-${i}-${j}`;
+                    const cell = document.createElement('div');
+                    cell.className = 'mine-cell';
+                    cell.id = cellId;
+                    cell.addEventListener('click', () => showCellInfo(cellId));
+                    mineGrid.appendChild(cell);
+                }
+            }
+
+            // --- Event Listeners ---
+            document.querySelectorAll('.control-slider').forEach(el => {
+                if (el.type === 'range') {
+                    el.addEventListener('input', () => {
+                        const controlName = el.id;
+                        controls[controlName].valueEl.textContent = parseFloat(el.value).toFixed(controls[controlName].fixed);
+                    });
+                }
+            });
+            
+            runTestBtn.addEventListener('click', runPrediction);
+            resetBtn.addEventListener('click', resetControls);
+
+            // --- Core Functions ---
+            async function runPrediction() {
+                loader.classList.remove('opacity-0');
+                runTestBtn.disabled = true;
+
+                const payload = {
+                    displacement: parseFloat(controls.displacement.slider.value),
+                    strain: parseFloat(controls.strain.slider.value),
+                    pore_pressure: parseFloat(controls.porePressure.slider.value),
+                    rainfall: parseFloat(controls.rainfall.slider.value),
+                    temperature: parseFloat(controls.temperature.slider.value),
+                    vibration: controls.vibration.checkbox.checked ? 1 : 0,
+                };
+
+                try {
+                    const response = await fetch('/api/predict', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(payload),
+                    });
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    currentRiskData = await response.json();
+                    updateHeatmap(currentRiskData);
+                } catch (error) {
+                    console.error("Error fetching prediction:", error);
+                } finally {
+                    loader.classList.add('opacity-0');
+                    runTestBtn.disabled = false;
+                }
+            }
+
+            function updateHeatmap(riskData) {
+                for (const cellId in riskData) {
+                    const cell = document.getElementById(cellId);
+                    if (cell) {
+                        cell.style.boxShadow = getTraceStyleForRisk(riskData[cellId]);
+                    }
+                }
+            }
+            
+            function getTraceStyleForRisk(risk) {
+                if (risk < 0.20) return 'none'; 
+                let color;
+                if (risk < 0.5) color = `hsl(55, 90%, 60%)`;   // Moderate - Yellow
+                else if (risk < 0.75) color = `hsl(30, 95%, 60%)`; // High - Orange
+                else color = `hsl(0, 90%, 60%)`;    // Critical - Red
+                
+                const spread = Math.max(2, Math.round(risk * 15));
+                return `inset 0 0 ${spread}px 2px ${color}`;
+            }
+            
+            function getRiskLevel(risk) {
+                if (risk === undefined) return { text: "N/A", color: "text-gray-400" };
+                if (risk < 0.20) return { text: "Low", color: "text-green-400" };
+                if (risk < 0.5) return { text: "Moderate", color: "text-yellow-400" };
+                if (risk < 0.75) return { text: "High", color: "text-orange-400" };
+                return { text: "Critical", color: "text-red-500" };
+            }
+
+            function showCellInfo(cellId) {
+                const staticData = staticMineData[cellId];
+                const riskScore = currentRiskData[cellId];
+                const riskLevel = getRiskLevel(riskScore);
+
+                if (!staticData) return;
+                infoPanel.classList.remove('opacity-0', 'scale-95');
+
+                let riskHTML;
+                 if (riskLevel.text === "Low" || riskLevel.text === "N/A") {
+                    riskHTML = `<span class="font-bold text-lg ${riskLevel.color}">${riskLevel.text}</span>`;
+                } else {
+                    riskHTML = `<span class="font-bold text-lg ${riskLevel.color}">${riskLevel.text} (${(riskScore * 100).toFixed(1)}%)</span>`;
+                }
+
+
+                infoContent.innerHTML = `
+                    <p class="font-bold text-base text-white -mb-1">${cellId}</p>
+                    <div class="text-xs text-gray-400 pb-2">Base Geotechnical State</div>
+                    <div class="flex justify-between"><span class="text-gray-400">Slope Angle:</span> <span class="font-semibold text-white">${staticData.slope_angle}°</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Rock Quality:</span> <span class="font-semibold text-white">${staticData.rock_quality}/10</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Displacement:</span> <span class="font-semibold text-white">${staticData.base_displacement} mm</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Strain:</span> <span class="font-semibold text-white">${staticData.base_strain} με</span></div>
+                    <div class="flex justify-between"><span class="text-gray-400">Pore Pressure:</span> <span class="font-semibold text-white">${staticData.base_pore_pressure} kPa</span></div>
+                    <div class="flex justify-between items-center mt-2 pt-2 border-t border-gray-600">
+                        <span class="text-gray-300 font-semibold">Predicted Risk:</span> 
+                        ${riskHTML}
+                    </div>
+                `;
+            }
+
+            function resetControls() {
+                 for (const controlName in controls) {
+                     const control = controls[controlName];
+                     if(control.slider){
+                         control.slider.value = control.default;
+                         control.valueEl.textContent = parseFloat(control.default).toFixed(control.fixed);
+                     } else if (control.checkbox) {
+                         control.checkbox.checked = control.default;
+                     }
+                 }
+                 runPrediction();
+            }
+
+            // Run initial prediction on load
+            runPrediction();
+        });
+    </script>
+</body>
+</html>
+
